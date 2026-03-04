@@ -1,6 +1,6 @@
 [project]
 name = "unreal-animation-mcp"
-version = "0.1.0"
+version = "0.1.1"
 description = "Animation data inspector for Unreal Engine AI development via MCP"
 readme = "README.md"
 license = { text = "MIT" }

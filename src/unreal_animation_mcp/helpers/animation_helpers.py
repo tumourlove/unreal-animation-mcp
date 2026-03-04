@@ -418,70 +418,32 @@ def get_abp_info(asset_path):
     if err:
         return _json_error(err)
 
-    skel = asset.get_editor_property("target_skeleton")
+    result = {"asset_path": asset_path}
 
-    return _json_result({
-        "asset_path": asset_path,
-        "target_skeleton": skel.get_path_name() if skel else None,
-        "is_template": asset.get_editor_property("is_template"),
-        "multi_threaded_update": asset.get_editor_property("use_multi_threaded_animation_update"),
-        "linked_layer_sharing": asset.get_editor_property("enable_linked_anim_layer_instance_sharing"),
-    })
+    for prop_name, key in [
+        ("target_skeleton", "target_skeleton"),
+        ("use_multi_threaded_animation_update", "multi_threaded_update"),
+        ("enable_linked_anim_layer_instance_sharing", "linked_layer_sharing"),
+    ]:
+        try:
+            val = asset.get_editor_property(prop_name)
+            if hasattr(val, 'get_path_name'):
+                val = val.get_path_name()
+            result[key] = val
+        except Exception:
+            result[key] = None
+
+    return _json_result(result)
 
 
 def get_abp_graphs(asset_path):
-    """List animation graphs in an ABP."""
-    asset, err = _load_asset(asset_path)
-    if err:
-        return _json_error(err)
-
-    # Access via AnimationLibrary
-    lib = unreal.AnimationLibrary
-    graphs = lib.get_animation_graphs(asset)
-
-    graph_list = []
-    for g in graphs:
-        graph_list.append({
-            "name": g.get_name(),
-        })
-
-    return _json_result({
-        "asset_path": asset_path,
-        "graph_count": len(graph_list),
-        "graphs": graph_list,
-    })
+    """List animation graphs in an ABP. Delegates to C++ plugin."""
+    return unreal.AnimationMCPReaderLibrary.get_graphs(asset_path)
 
 
 def get_abp_nodes(asset_path, node_class=None):
-    """Enumerate anim graph nodes by class."""
-    asset, err = _load_asset(asset_path)
-    if err:
-        return _json_error(err)
-
-    lib = unreal.AnimationLibrary
-
-    if node_class:
-        cls = getattr(unreal, node_class, None)
-        if cls is None:
-            return _json_error(f"Unknown node class: {node_class}")
-        nodes = lib.get_nodes_of_class(asset, cls, True)
-    else:
-        nodes = lib.get_nodes_of_class(asset, unreal.AnimGraphNode_Base, True)
-
-    node_list = []
-    for n in nodes:
-        node_list.append({
-            "class": n.get_class().get_name(),
-            "name": n.get_name(),
-            "title": n.get_node_title(unreal.NodeTitleType.FULL_TITLE) if hasattr(n, 'get_node_title') else str(n.get_name()),
-        })
-
-    return _json_result({
-        "asset_path": asset_path,
-        "node_count": len(node_list),
-        "filter_class": node_class,
-        "nodes": node_list,
-    })
+    """Enumerate anim graph nodes by class. Delegates to C++ plugin."""
+    return unreal.AnimationMCPReaderLibrary.get_nodes(asset_path, node_class or "")
 
 
 def get_abp_asset_overrides(asset_path):
@@ -730,11 +692,11 @@ def search_animations(query=None, anim_type=None, folder=None, skeleton=None):
             parts = cp.rsplit(".", 1)
             class_paths.append(unreal.TopLevelAssetPath(parts[0], parts[1]))
 
-    ar_filter = unreal.ARFilter()
-    ar_filter.class_paths = class_paths
+    filter_kwargs = {"class_paths": class_paths}
     if folder:
-        ar_filter.package_paths = [folder]
-        ar_filter.recursive_paths = True
+        filter_kwargs["package_paths"] = [folder]
+        filter_kwargs["recursive_paths"] = True
+    ar_filter = unreal.ARFilter(**filter_kwargs)
 
     assets = registry.get_assets(ar_filter)
 
@@ -755,14 +717,15 @@ def search_animations(query=None, anim_type=None, folder=None, skeleton=None):
 def search_by_notify(notify_name=None, notify_class=None, folder=None):
     """Find animations containing a specific notify."""
     registry = unreal.AssetRegistryHelpers.get_asset_registry()
-    ar_filter = unreal.ARFilter()
-    ar_filter.class_paths = [
+    notify_class_paths = [
         unreal.TopLevelAssetPath("/Script/Engine", "AnimSequence"),
         unreal.TopLevelAssetPath("/Script/Engine", "AnimMontage"),
     ]
+    filter_kwargs = {"class_paths": notify_class_paths}
     if folder:
-        ar_filter.package_paths = [folder]
-        ar_filter.recursive_paths = True
+        filter_kwargs["package_paths"] = [folder]
+        filter_kwargs["recursive_paths"] = True
+    ar_filter = unreal.ARFilter(**filter_kwargs)
 
     assets = registry.get_assets(ar_filter)
     lib = unreal.AnimationLibrary
@@ -796,11 +759,11 @@ def search_by_notify(notify_name=None, notify_class=None, folder=None):
 def search_by_curve(curve_name, curve_type=None, folder=None):
     """Find animations containing a specific curve."""
     registry = unreal.AssetRegistryHelpers.get_asset_registry()
-    ar_filter = unreal.ARFilter()
-    ar_filter.class_paths = [unreal.TopLevelAssetPath("/Script/Engine", "AnimSequence")]
+    filter_kwargs = {"class_paths": [unreal.TopLevelAssetPath("/Script/Engine", "AnimSequence")]}
     if folder:
-        ar_filter.package_paths = [folder]
-        ar_filter.recursive_paths = True
+        filter_kwargs["package_paths"] = [folder]
+        filter_kwargs["recursive_paths"] = True
+    ar_filter = unreal.ARFilter(**filter_kwargs)
 
     assets = registry.get_assets(ar_filter)
     lib = unreal.AnimationLibrary
@@ -829,11 +792,11 @@ def search_by_curve(curve_name, curve_type=None, folder=None):
 def search_by_slot(slot_name, folder=None):
     """Find montages using a specific slot."""
     registry = unreal.AssetRegistryHelpers.get_asset_registry()
-    ar_filter = unreal.ARFilter()
-    ar_filter.class_paths = [unreal.TopLevelAssetPath("/Script/Engine", "AnimMontage")]
+    filter_kwargs = {"class_paths": [unreal.TopLevelAssetPath("/Script/Engine", "AnimMontage")]}
     if folder:
-        ar_filter.package_paths = [folder]
-        ar_filter.recursive_paths = True
+        filter_kwargs["package_paths"] = [folder]
+        filter_kwargs["recursive_paths"] = True
+    ar_filter = unreal.ARFilter(**filter_kwargs)
 
     assets = registry.get_assets(ar_filter)
     lib = unreal.AnimationLibrary
@@ -858,14 +821,15 @@ def audit_notifies(asset_path=None, folder=None):
     if asset_path:
         assets_to_check = [asset_path]
     else:
-        ar_filter = unreal.ARFilter()
-        ar_filter.class_paths = [
+        audit_class_paths = [
             unreal.TopLevelAssetPath("/Script/Engine", "AnimSequence"),
             unreal.TopLevelAssetPath("/Script/Engine", "AnimMontage"),
         ]
+        filter_kwargs = {"class_paths": audit_class_paths}
         if folder:
-            ar_filter.package_paths = [folder]
-            ar_filter.recursive_paths = True
+            filter_kwargs["package_paths"] = [folder]
+            filter_kwargs["recursive_paths"] = True
+        ar_filter = unreal.ARFilter(**filter_kwargs)
         ad_list = registry.get_assets(ar_filter)
         assets_to_check = [str(ad.package_name) for ad in ad_list]
 
@@ -958,10 +922,11 @@ def get_animation_summary(folder):
 
     for anim_type, class_path in _ANIM_CLASSES.items():
         parts = class_path.rsplit(".", 1)
-        ar_filter = unreal.ARFilter()
-        ar_filter.class_paths = [unreal.TopLevelAssetPath(parts[0], parts[1])]
-        ar_filter.package_paths = [folder]
-        ar_filter.recursive_paths = True
+        ar_filter = unreal.ARFilter(
+            class_paths=[unreal.TopLevelAssetPath(parts[0], parts[1])],
+            package_paths=[folder],
+            recursive_paths=True,
+        )
         assets = registry.get_assets(ar_filter)
         type_counts[anim_type] = len(assets)
 

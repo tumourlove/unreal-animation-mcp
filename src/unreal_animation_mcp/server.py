@@ -640,12 +640,12 @@ def get_abp_graphs(asset_path: str) -> str:
         asset_path: Unreal asset path
     """
     script = (
-        f"result = animation_helpers.get_abp_graphs("
-        f"'{_escape_py_string(asset_path)}')\n"
+        "import unreal, json\n"
+        f"result = unreal.AnimationMCPReaderLibrary.get_graphs('{_escape_py_string(asset_path)}')\n"
         "print(result)\n"
     )
     try:
-        data = _run_animation_script(script)
+        data = _run_plugin_call(script)
     except EditorNotRunning as e:
         return f"Editor not available: {e}"
 
@@ -653,9 +653,12 @@ def get_abp_graphs(asset_path: str) -> str:
     if err:
         return f"Error: {err}"
 
-    lines = [f"Animation Graphs ({data.get('graph_count', 0)}):"]
+    lines = [f"Animation Graphs ({data.get('count', 0)}):"]
     for g in data.get("graphs", []):
-        lines.append(f"  - {g.get('name', '?')}")
+        name = g.get("name", "?")
+        nodes = g.get("anim_node_count", 0)
+        sms = g.get("state_machine_count", 0)
+        lines.append(f"  - {name} ({nodes} anim nodes, {sms} state machines)")
     return "\n".join(lines)
 
 
@@ -667,12 +670,14 @@ def get_abp_nodes(asset_path: str, node_class: str | None = None) -> str:
         asset_path: Unreal asset path
         node_class: Filter by node class name (e.g. 'AnimGraphNode_BlendListByBool')
     """
-    args = [f"'{_escape_py_string(asset_path)}'"]
-    if node_class:
-        args.append(f"node_class='{_escape_py_string(node_class)}'")
-    script = f"result = animation_helpers.get_abp_nodes({', '.join(args)})\nprint(result)\n"
+    filter_arg = _escape_py_string(node_class) if node_class else ""
+    script = (
+        "import unreal, json\n"
+        f"result = unreal.AnimationMCPReaderLibrary.get_nodes('{_escape_py_string(asset_path)}', '{filter_arg}')\n"
+        "print(result)\n"
+    )
     try:
-        data = _run_animation_script(script)
+        data = _run_plugin_call(script)
     except EditorNotRunning as e:
         return f"Editor not available: {e}"
 
@@ -680,9 +685,19 @@ def get_abp_nodes(asset_path: str, node_class: str | None = None) -> str:
     if err:
         return f"Error: {err}"
 
-    lines = [f"ABP Nodes ({data.get('node_count', 0)}):"]
+    lines = [f"ABP Nodes ({data.get('count', 0)}):"]
     for n in data.get("nodes", []):
-        lines.append(f"  [{n.get('class', '?')}] {n.get('title', n.get('name', '?'))}")
+        title = n.get("title", n.get("name", "?"))
+        graph = n.get("graph", "")
+        cls = n.get("class", "?")
+        line = f"  [{cls}] {title}"
+        if graph:
+            line += f" (graph: {graph})"
+        pins = n.get("connected_pins", [])
+        if pins:
+            for p in pins:
+                line += f"\n    Pin: {p.get('name', '?')} ({p.get('direction', '?')}, {p.get('connections', 0)} connections)"
+        lines.append(line)
     return "\n".join(lines)
 
 
