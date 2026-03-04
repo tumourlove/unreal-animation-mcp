@@ -1,0 +1,26 @@
+[project]
+name = "unreal-animation-mcp"
+version = "0.1.0"
+description = "Animation data inspector for Unreal Engine AI development via MCP"
+readme = "README.md"
+license = { text = "MIT" }
+requires-python = ">=3.11"
+dependencies = [
+    "mcp>=1.0.0",
+]
+
+[project.scripts]
+unreal-animation-mcp = "unreal_animation_mcp.__main__:cli"
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/unreal_animation_mcp"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+
+[dependency-groups]
+dev = ["pytest>=8.0"]
