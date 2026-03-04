@@ -503,3 +503,201 @@ def get_abp_asset_overrides(asset_path):
         "override_count": len(override_list),
         "overrides": override_list,
     })
+
+
+# ---------------------------------------------------------------------------
+# Editing — Notifies
+# ---------------------------------------------------------------------------
+
+def add_notify(asset_path, track_name, time, notify_class):
+    asset, err = _load_asset(asset_path)
+    if err: return _json_error(err)
+    lib = unreal.AnimationLibrary
+    cls = getattr(unreal, notify_class, None)
+    if cls is None: return _json_error(f"Unknown notify class: {notify_class}")
+    result = lib.add_animation_notify_event(asset, track_name, time, cls)
+    return _json_result({"asset_path": asset_path, "time": time, "class": notify_class})
+
+def add_notify_state(asset_path, track_name, time, duration, notify_state_class):
+    asset, err = _load_asset(asset_path)
+    if err: return _json_error(err)
+    lib = unreal.AnimationLibrary
+    cls = getattr(unreal, notify_state_class, None)
+    if cls is None: return _json_error(f"Unknown notify state class: {notify_state_class}")
+    result = lib.add_animation_notify_state_event(asset, track_name, time, duration, cls)
+    return _json_result({"asset_path": asset_path, "time": time, "duration": duration, "class": notify_state_class})
+
+def remove_notifies(asset_path, notify_name=None, track_name=None):
+    asset, err = _load_asset(asset_path)
+    if err: return _json_error(err)
+    lib = unreal.AnimationLibrary
+    if notify_name:
+        lib.remove_animation_notify_events_by_name(asset, notify_name)
+    elif track_name:
+        lib.remove_animation_notify_events_by_track(asset, track_name)
+    return _json_result({"asset_path": asset_path, "removed_by": notify_name or track_name})
+
+def add_notify_track(asset_path, track_name, color=None):
+    asset, err = _load_asset(asset_path)
+    if err: return _json_error(err)
+    lib = unreal.AnimationLibrary
+    c = unreal.LinearColor(r=1, g=1, b=1, a=1) if color is None else unreal.LinearColor(**color)
+    lib.add_animation_notify_track(asset, track_name, c)
+    return _json_result({"asset_path": asset_path, "track_name": track_name})
+
+def remove_notify_track(asset_path, track_name):
+    asset, err = _load_asset(asset_path)
+    if err: return _json_error(err)
+    unreal.AnimationLibrary.remove_animation_notify_track(asset, track_name)
+    return _json_result({"asset_path": asset_path, "removed_track": track_name})
+
+# ---------------------------------------------------------------------------
+# Editing — Curves
+# ---------------------------------------------------------------------------
+
+def add_curve(asset_path, curve_name, curve_type):
+    asset, err = _load_asset(asset_path)
+    if err: return _json_error(err)
+    ct_map = {"float": unreal.RawCurveTrackTypes.RCT_FLOAT, "vector": unreal.RawCurveTrackTypes.RCT_VECTOR, "transform": unreal.RawCurveTrackTypes.RCT_TRANSFORM}
+    ct = ct_map.get(curve_type)
+    if ct is None: return _json_error(f"Unknown curve type: {curve_type}")
+    unreal.AnimationLibrary.add_curve(asset, curve_name, ct)
+    return _json_result({"asset_path": asset_path, "curve_name": curve_name, "type": curve_type})
+
+def add_curve_keys(asset_path, curve_name, times, values):
+    asset, err = _load_asset(asset_path)
+    if err: return _json_error(err)
+    unreal.AnimationLibrary.add_float_curve_keys(asset, curve_name, times, values)
+    return _json_result({"asset_path": asset_path, "curve_name": curve_name, "key_count": len(times)})
+
+def remove_curve(asset_path, curve_name):
+    asset, err = _load_asset(asset_path)
+    if err: return _json_error(err)
+    unreal.AnimationLibrary.remove_curve(asset, curve_name)
+    return _json_result({"asset_path": asset_path, "removed_curve": curve_name})
+
+# ---------------------------------------------------------------------------
+# Editing — Sync Markers
+# ---------------------------------------------------------------------------
+
+def add_sync_marker(asset_path, marker_name, time, track_name):
+    asset, err = _load_asset(asset_path)
+    if err: return _json_error(err)
+    unreal.AnimationLibrary.add_animation_sync_marker(asset, marker_name, time, track_name)
+    return _json_result({"asset_path": asset_path, "marker_name": marker_name, "time": time})
+
+def remove_sync_markers(asset_path, marker_name=None, track_name=None):
+    asset, err = _load_asset(asset_path)
+    if err: return _json_error(err)
+    lib = unreal.AnimationLibrary
+    if marker_name:
+        lib.remove_animation_sync_markers_by_name(asset, marker_name)
+    elif track_name:
+        lib.remove_animation_sync_markers_by_track(asset, track_name)
+    else:
+        lib.remove_all_animation_sync_markers(asset)
+    return _json_result({"asset_path": asset_path, "removed_by": marker_name or track_name or "all"})
+
+# ---------------------------------------------------------------------------
+# Editing — Properties
+# ---------------------------------------------------------------------------
+
+def set_root_motion(asset_path, enabled, lock_type=None):
+    asset, err = _load_asset(asset_path)
+    if err: return _json_error(err)
+    lib = unreal.AnimationLibrary
+    lib.set_root_motion_enabled(asset, enabled)
+    if lock_type is not None:
+        lt = getattr(unreal.RootMotionRootLock, lock_type, None)
+        if lt: lib.set_root_motion_lock_type(asset, lt)
+    return _json_result({"asset_path": asset_path, "root_motion_enabled": enabled})
+
+def set_rate_scale(asset_path, rate_scale):
+    asset, err = _load_asset(asset_path)
+    if err: return _json_error(err)
+    unreal.AnimationLibrary.set_rate_scale(asset, rate_scale)
+    return _json_result({"asset_path": asset_path, "rate_scale": rate_scale})
+
+def set_additive_type(asset_path, additive_type, base_pose_type=None):
+    asset, err = _load_asset(asset_path)
+    if err: return _json_error(err)
+    lib = unreal.AnimationLibrary
+    at = getattr(unreal.AdditiveAnimationType, additive_type, None)
+    if at: lib.set_additive_animation_type(asset, at)
+    if base_pose_type:
+        bpt = getattr(unreal.AdditiveBasePoseType, base_pose_type, None)
+        if bpt: lib.set_additive_base_pose_type(asset, bpt)
+    return _json_result({"asset_path": asset_path, "additive_type": additive_type})
+
+# ---------------------------------------------------------------------------
+# Editing — Virtual Bones
+# ---------------------------------------------------------------------------
+
+def add_virtual_bone(asset_path, source_bone, target_bone):
+    asset, err = _load_asset(asset_path)
+    if err: return _json_error(err)
+    name = unreal.AnimationLibrary.add_virtual_bone(asset, source_bone, target_bone)
+    return _json_result({"asset_path": asset_path, "virtual_bone": str(name), "source": source_bone, "target": target_bone})
+
+def remove_virtual_bones(asset_path, bone_names=None):
+    asset, err = _load_asset(asset_path)
+    if err: return _json_error(err)
+    lib = unreal.AnimationLibrary
+    if bone_names:
+        lib.remove_virtual_bones(asset, bone_names)
+    else:
+        lib.remove_all_virtual_bones(asset)
+    return _json_result({"asset_path": asset_path, "removed": bone_names or "all"})
+
+def copy_notifies(source_path, dest_path):
+    src, err = _load_asset(source_path)
+    if err: return _json_error(err)
+    dst, err = _load_asset(dest_path)
+    if err: return _json_error(err)
+    unreal.AnimationLibrary.copy_anim_notifies_from_sequence(src, dst)
+    return _json_result({"source": source_path, "dest": dest_path})
+
+# ---------------------------------------------------------------------------
+# Editing — Montage
+# ---------------------------------------------------------------------------
+
+def set_montage_blend(asset_path, blend_in_time=None, blend_out_time=None, blend_out_trigger=None, auto_blend_out=None):
+    asset, err = _load_asset(asset_path)
+    if err: return _json_error(err)
+    if blend_in_time is not None:
+        bi = asset.get_editor_property("blend_in")
+        bi.set_editor_property("blend_time", blend_in_time)
+        asset.set_editor_property("blend_in", bi)
+    if blend_out_time is not None:
+        bo = asset.get_editor_property("blend_out")
+        bo.set_editor_property("blend_time", blend_out_time)
+        asset.set_editor_property("blend_out", bo)
+    if blend_out_trigger is not None:
+        asset.set_editor_property("blend_out_trigger_time", blend_out_trigger)
+    if auto_blend_out is not None:
+        asset.set_editor_property("enable_auto_blend_out", auto_blend_out)
+    return _json_result({"asset_path": asset_path, "updated": True})
+
+# ---------------------------------------------------------------------------
+# Editing — Metadata
+# ---------------------------------------------------------------------------
+
+def add_meta_data(asset_path, meta_data_class):
+    asset, err = _load_asset(asset_path)
+    if err: return _json_error(err)
+    cls = getattr(unreal, meta_data_class, None)
+    if cls is None: return _json_error(f"Unknown metadata class: {meta_data_class}")
+    unreal.AnimationLibrary.add_meta_data(asset, cls)
+    return _json_result({"asset_path": asset_path, "class": meta_data_class})
+
+def remove_meta_data(asset_path, meta_data_class=None):
+    asset, err = _load_asset(asset_path)
+    if err: return _json_error(err)
+    if meta_data_class:
+        cls = getattr(unreal, meta_data_class, None)
+        items = unreal.AnimationLibrary.get_meta_data_of_class(asset, cls)
+        for item in items:
+            unreal.AnimationLibrary.remove_meta_data(asset, item)
+    else:
+        unreal.AnimationLibrary.remove_all_meta_data(asset)
+    return _json_result({"asset_path": asset_path, "removed": meta_data_class or "all"})
