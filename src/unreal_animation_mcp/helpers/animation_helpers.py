@@ -701,3 +701,272 @@ def remove_meta_data(asset_path, meta_data_class=None):
     else:
         unreal.AnimationLibrary.remove_all_meta_data(asset)
     return _json_result({"asset_path": asset_path, "removed": meta_data_class or "all"})
+
+
+# ---------------------------------------------------------------------------
+# Search & Analysis
+# ---------------------------------------------------------------------------
+
+_ANIM_CLASSES = {
+    "AnimSequence": "/Script/Engine.AnimSequence",
+    "AnimMontage": "/Script/Engine.AnimMontage",
+    "BlendSpace": "/Script/Engine.BlendSpace",
+    "BlendSpace1D": "/Script/Engine.BlendSpace1D",
+    "AnimBlueprint": "/Script/Engine.AnimBlueprint",
+}
+
+
+def search_animations(query=None, anim_type=None, folder=None, skeleton=None):
+    """Find animation assets by criteria."""
+    registry = unreal.AssetRegistryHelpers.get_asset_registry()
+
+    # Build class filter
+    class_paths = []
+    if anim_type and anim_type in _ANIM_CLASSES:
+        parts = _ANIM_CLASSES[anim_type].rsplit(".", 1)
+        class_paths.append(unreal.TopLevelAssetPath(parts[0], parts[1]))
+    else:
+        for cp in _ANIM_CLASSES.values():
+            parts = cp.rsplit(".", 1)
+            class_paths.append(unreal.TopLevelAssetPath(parts[0], parts[1]))
+
+    ar_filter = unreal.ARFilter()
+    ar_filter.class_paths = class_paths
+    if folder:
+        ar_filter.package_paths = [folder]
+        ar_filter.recursive_paths = True
+
+    assets = registry.get_assets(ar_filter)
+
+    results = []
+    for ad in assets:
+        name = str(ad.asset_name)
+        if query and query.lower() not in name.lower():
+            continue
+        results.append({
+            "name": name,
+            "path": str(ad.package_name),
+            "class": str(ad.asset_class_path.asset_name),
+        })
+
+    return _json_result({"count": len(results), "results": results})
+
+
+def search_by_notify(notify_name=None, notify_class=None, folder=None):
+    """Find animations containing a specific notify."""
+    registry = unreal.AssetRegistryHelpers.get_asset_registry()
+    ar_filter = unreal.ARFilter()
+    ar_filter.class_paths = [
+        unreal.TopLevelAssetPath("/Script/Engine", "AnimSequence"),
+        unreal.TopLevelAssetPath("/Script/Engine", "AnimMontage"),
+    ]
+    if folder:
+        ar_filter.package_paths = [folder]
+        ar_filter.recursive_paths = True
+
+    assets = registry.get_assets(ar_filter)
+    lib = unreal.AnimationLibrary
+    matches = []
+
+    for ad in assets:
+        asset = ad.get_asset()
+        if asset is None:
+            continue
+        events = lib.get_animation_notify_events(asset)
+        for evt in events:
+            name = str(evt.get_editor_property("notify_name"))
+            notify_obj = evt.get_editor_property("notify")
+            state_obj = evt.get_editor_property("notify_state_class")
+            cls_name = ""
+            if notify_obj:
+                cls_name = notify_obj.get_class().get_name()
+            elif state_obj:
+                cls_name = state_obj.get_class().get_name()
+
+            if notify_name and notify_name.lower() in name.lower():
+                matches.append({"asset": str(ad.package_name), "notify": name, "class": cls_name})
+                break
+            elif notify_class and notify_class.lower() in cls_name.lower():
+                matches.append({"asset": str(ad.package_name), "notify": name, "class": cls_name})
+                break
+
+    return _json_result({"count": len(matches), "matches": matches})
+
+
+def search_by_curve(curve_name, curve_type=None, folder=None):
+    """Find animations containing a specific curve."""
+    registry = unreal.AssetRegistryHelpers.get_asset_registry()
+    ar_filter = unreal.ARFilter()
+    ar_filter.class_paths = [unreal.TopLevelAssetPath("/Script/Engine", "AnimSequence")]
+    if folder:
+        ar_filter.package_paths = [folder]
+        ar_filter.recursive_paths = True
+
+    assets = registry.get_assets(ar_filter)
+    lib = unreal.AnimationLibrary
+    matches = []
+
+    ct_list = [unreal.RawCurveTrackTypes.RCT_FLOAT]
+    if curve_type == "vector":
+        ct_list = [unreal.RawCurveTrackTypes.RCT_VECTOR]
+    elif curve_type == "transform":
+        ct_list = [unreal.RawCurveTrackTypes.RCT_TRANSFORM]
+    elif curve_type is None:
+        ct_list = [unreal.RawCurveTrackTypes.RCT_FLOAT, unreal.RawCurveTrackTypes.RCT_VECTOR, unreal.RawCurveTrackTypes.RCT_TRANSFORM]
+
+    for ad in assets:
+        asset = ad.get_asset()
+        if asset is None:
+            continue
+        for ct in ct_list:
+            if lib.does_curve_exist(asset, curve_name, ct):
+                matches.append({"asset": str(ad.package_name), "curve": curve_name})
+                break
+
+    return _json_result({"count": len(matches), "matches": matches})
+
+
+def search_by_slot(slot_name, folder=None):
+    """Find montages using a specific slot."""
+    registry = unreal.AssetRegistryHelpers.get_asset_registry()
+    ar_filter = unreal.ARFilter()
+    ar_filter.class_paths = [unreal.TopLevelAssetPath("/Script/Engine", "AnimMontage")]
+    if folder:
+        ar_filter.package_paths = [folder]
+        ar_filter.recursive_paths = True
+
+    assets = registry.get_assets(ar_filter)
+    lib = unreal.AnimationLibrary
+    matches = []
+
+    for ad in assets:
+        asset = ad.get_asset()
+        if asset is None:
+            continue
+        slots = [str(n) for n in lib.get_montage_slot_names(asset)]
+        if slot_name in slots:
+            matches.append({"asset": str(ad.package_name), "slots": slots})
+
+    return _json_result({"count": len(matches), "matches": matches})
+
+
+def audit_notifies(asset_path=None, folder=None):
+    """Audit notify usage across animations."""
+    registry = unreal.AssetRegistryHelpers.get_asset_registry()
+    lib = unreal.AnimationLibrary
+
+    if asset_path:
+        assets_to_check = [asset_path]
+    else:
+        ar_filter = unreal.ARFilter()
+        ar_filter.class_paths = [
+            unreal.TopLevelAssetPath("/Script/Engine", "AnimSequence"),
+            unreal.TopLevelAssetPath("/Script/Engine", "AnimMontage"),
+        ]
+        if folder:
+            ar_filter.package_paths = [folder]
+            ar_filter.recursive_paths = True
+        ad_list = registry.get_assets(ar_filter)
+        assets_to_check = [str(ad.package_name) for ad in ad_list]
+
+    notify_counts = {}
+    issues = []
+
+    for path in assets_to_check:
+        asset = unreal.EditorAssetLibrary.load_asset(path)
+        if asset is None:
+            continue
+        events = lib.get_animation_notify_events(asset)
+        for evt in events:
+            name = str(evt.get_editor_property("notify_name"))
+            notify_counts[name] = notify_counts.get(name, 0) + 1
+            chance = evt.get_editor_property("notify_trigger_chance")
+            if chance <= 0:
+                issues.append({"asset": path, "notify": name, "issue": "0% trigger chance"})
+
+    sorted_notifies = sorted(notify_counts.items(), key=lambda x: -x[1])
+
+    return _json_result({
+        "assets_checked": len(assets_to_check),
+        "unique_notifies": len(notify_counts),
+        "notify_frequencies": [{"name": n, "count": c} for n, c in sorted_notifies],
+        "issues": issues,
+    })
+
+
+def audit_blendspace(asset_path):
+    """Analyze BlendSpace sample coverage."""
+    asset, err = _load_asset(asset_path)
+    if err: return _json_error(err)
+
+    samples_raw = asset.get_editor_property("sample_data")
+    samples = []
+    for s in samples_raw:
+        val = s.get_editor_property("sample_value")
+        samples.append({"x": val.x, "y": val.y})
+
+    # Check for duplicate positions
+    duplicates = []
+    for i in range(len(samples)):
+        for j in range(i + 1, len(samples)):
+            if abs(samples[i]["x"] - samples[j]["x"]) < 0.01 and abs(samples[i]["y"] - samples[j]["y"]) < 0.01:
+                duplicates.append({"index_a": i, "index_b": j})
+
+    return _json_result({
+        "asset_path": asset_path,
+        "sample_count": len(samples),
+        "samples": samples,
+        "duplicate_positions": duplicates,
+    })
+
+
+def compare_animations(path_a, path_b):
+    """Compare two animation assets."""
+    a, err = _load_asset(path_a)
+    if err: return _json_error(err)
+    b, err = _load_asset(path_b)
+    if err: return _json_error(err)
+
+    lib = unreal.AnimationLibrary
+
+    diff = {"path_a": path_a, "path_b": path_b, "differences": []}
+
+    len_a = lib.get_sequence_length(a)
+    len_b = lib.get_sequence_length(b)
+    if abs(len_a - len_b) > 0.001:
+        diff["differences"].append({"property": "length", "a": len_a, "b": len_b})
+
+    frames_a = lib.get_num_frames(a)
+    frames_b = lib.get_num_frames(b)
+    if frames_a != frames_b:
+        diff["differences"].append({"property": "num_frames", "a": frames_a, "b": frames_b})
+
+    notifies_a = len(lib.get_animation_notify_events(a))
+    notifies_b = len(lib.get_animation_notify_events(b))
+    if notifies_a != notifies_b:
+        diff["differences"].append({"property": "notify_count", "a": notifies_a, "b": notifies_b})
+
+    return _json_result(diff)
+
+
+def get_animation_summary(folder):
+    """Folder-level animation stats."""
+    registry = unreal.AssetRegistryHelpers.get_asset_registry()
+
+    type_counts = {}
+    total_duration = 0.0
+
+    for anim_type, class_path in _ANIM_CLASSES.items():
+        parts = class_path.rsplit(".", 1)
+        ar_filter = unreal.ARFilter()
+        ar_filter.class_paths = [unreal.TopLevelAssetPath(parts[0], parts[1])]
+        ar_filter.package_paths = [folder]
+        ar_filter.recursive_paths = True
+        assets = registry.get_assets(ar_filter)
+        type_counts[anim_type] = len(assets)
+
+    return _json_result({
+        "folder": folder,
+        "type_counts": type_counts,
+        "total_assets": sum(type_counts.values()),
+    })
