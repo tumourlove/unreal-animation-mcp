@@ -4,6 +4,10 @@ Animation data inspector and editor for Unreal Engine AI development via Model C
 
 Inspect, search, and edit animation sequences, montages, blend spaces, animation blueprints, skeletons, and skeletal meshes — 62 tools total.
 
+## Why?
+
+Animation data in Unreal is deeply nested and spread across many asset types — sequences hold notifies, curves, and bone tracks; montages add sections and slots on top; blend spaces map animations to parameter grids; and Animation Blueprints wire it all together through state machines, transitions, and blend nodes. AI agents can't see any of this from C++ alone. This server exposes the full animation stack as structured data so agents can inspect, search, audit, and edit animation assets alongside the rest of your project.
+
 **Complements** (does not replace):
 - [unreal-source-mcp](https://github.com/tumourlove/unreal-source-mcp) — Engine-level source intelligence (full UE C++ and HLSL)
 - [unreal-project-mcp](https://github.com/tumourlove/unreal-project-mcp) — Project-level source intelligence (your C++ code)
