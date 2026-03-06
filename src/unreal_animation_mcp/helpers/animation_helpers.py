@@ -109,6 +109,19 @@ def get_anim_notifies(asset_path):
     })
 
 
+def _get_curve_type_map():
+    """Build available RawCurveTrackTypes map, skipping enums missing in this UE version."""
+    ct_map = {}
+    rct = getattr(unreal, "RawCurveTrackTypes", None)
+    if rct is None:
+        return ct_map
+    for name, attr in [("float", "RCT_FLOAT"), ("vector", "RCT_VECTOR"), ("transform", "RCT_TRANSFORM")]:
+        val = getattr(rct, attr, None)
+        if val is not None:
+            ct_map[name] = val
+    return ct_map
+
+
 def get_anim_curves(asset_path, curve_type=None):
     """All curves on an animation sequence."""
     asset, err = _load_asset(asset_path)
@@ -117,20 +130,23 @@ def get_anim_curves(asset_path, curve_type=None):
 
     lib = unreal.AnimationLibrary
     curves = []
+    ct_map = _get_curve_type_map()
 
-    for ct_name, ct_enum in [
-        ("float", unreal.RawCurveTrackTypes.RCT_FLOAT),
-        ("vector", unreal.RawCurveTrackTypes.RCT_VECTOR),
-        ("transform", unreal.RawCurveTrackTypes.RCT_TRANSFORM),
-    ]:
+    for ct_name, ct_enum in ct_map.items():
         if curve_type and curve_type != ct_name:
             continue
-        names = lib.get_animation_curve_names(asset, ct_enum)
+        try:
+            names = lib.get_animation_curve_names(asset, ct_enum)
+        except Exception:
+            continue
         for name in names:
             curve_data = {"name": str(name), "type": ct_name}
             if ct_name == "float":
-                keys = lib.get_float_keys(asset, name)
-                curve_data["key_count"] = len(keys) if keys else 0
+                try:
+                    keys = lib.get_float_keys(asset, name)
+                    curve_data["key_count"] = len(keys) if keys else 0
+                except Exception:
+                    curve_data["key_count"] = -1
             curves.append(curve_data)
 
     return _json_result({
@@ -156,13 +172,16 @@ def get_bone_tracks(asset_path, bone_name=None):
             "tracks": track_names,
         })
 
-    # Get keys for specific bone
-    if not lib.is_valid_raw_animation_track_name(asset, bone_name):
-        return _json_error(f"Bone track not found: {bone_name}")
+    # Validate bone name against track list (is_valid_raw_animation_track_name is broken in UE 5.7)
+    if bone_name not in track_names:
+        return _json_error(f"Bone track not found: {bone_name}. Available: {track_names[:10]}{'...' if len(track_names) > 10 else ''}")
 
-    positions = lib.get_raw_track_position_data(asset, bone_name)
-    rotations = lib.get_raw_track_rotation_data(asset, bone_name)
-    scales = lib.get_raw_track_scale_data(asset, bone_name)
+    try:
+        positions = lib.get_raw_track_position_data(asset, bone_name)
+        rotations = lib.get_raw_track_rotation_data(asset, bone_name)
+        scales = lib.get_raw_track_scale_data(asset, bone_name)
+    except Exception as e:
+        return _json_error(f"Failed to read bone track data for '{bone_name}': {e}")
 
     return _json_result({
         "asset_path": asset_path,
@@ -361,26 +380,41 @@ def get_blendspace_samples(asset_path):
 # ---------------------------------------------------------------------------
 
 def get_skeleton_info(asset_path):
-    """Bone hierarchy and metadata for a Skeleton."""
+    """Bone hierarchy and metadata for a Skeleton. Delegates to C++ plugin for reliability."""
+    # Prefer C++ plugin — avoids Python property crashes
+    try:
+        result = unreal.AnimationMCPReaderLibrary.get_skeleton_info(asset_path)
+        return result
+    except Exception:
+        pass
+
+    # Fallback: Python approach
     asset, err = _load_asset(asset_path)
     if err:
         return _json_error(err)
 
-    # Get bone names via the reference pose
-    ref_skeleton = asset.get_editor_property("reference_skeleton") if hasattr(asset, "reference_skeleton") else None
+    data = {"asset_path": asset_path}
 
-    # Use compatible skeletons list
-    compatible = asset.get_editor_property("compatible_skeletons")
-    compat_list = [str(s.get_path_name()) for s in compatible] if compatible else []
+    # Compatible skeletons
+    try:
+        compatible = asset.get_editor_property("compatible_skeletons")
+        data["compatible_skeletons"] = [str(s.get_path_name()) for s in compatible] if compatible else []
+    except Exception:
+        data["compatible_skeletons"] = []
 
-    return _json_result({
-        "asset_path": asset_path,
-        "compatible_skeletons": compat_list,
-    })
+    return _json_result(data)
 
 
 def get_skeletal_mesh_info(asset_path):
-    """Metadata for a SkeletalMesh."""
+    """Metadata for a SkeletalMesh. Delegates to C++ plugin for reliability."""
+    # Prefer C++ plugin — avoids lod_info crash in UE 5.7
+    try:
+        result = unreal.AnimationMCPReaderLibrary.get_skeletal_mesh_info(asset_path)
+        return result
+    except Exception:
+        pass
+
+    # Fallback: Python approach with safe property access
     asset, err = _load_asset(asset_path)
     if err:
         return _json_error(err)
@@ -397,6 +431,13 @@ def get_skeletal_mesh_info(asset_path):
                 "bone": str(sock.bone_name),
             })
 
+    lod_count = -1
+    try:
+        if hasattr(asset, "get_lod_count"):
+            lod_count = asset.get_lod_count()
+    except Exception:
+        pass
+
     return _json_result({
         "asset_path": asset_path,
         "skeleton": skel.get_path_name() if skel else None,
@@ -404,7 +445,7 @@ def get_skeletal_mesh_info(asset_path):
         "morph_targets": morph_names,
         "socket_count": len(sockets),
         "sockets": sockets,
-        "lod_count": len(asset.get_editor_property("lod_info")),
+        "lod_count": lod_count,
     })
 
 
@@ -452,12 +493,27 @@ def get_abp_asset_overrides(asset_path):
     if err:
         return _json_error(err)
 
-    overrides = asset.get_editor_property("parent_asset_overrides")
     override_list = []
-    for o in overrides:
-        override_list.append({
-            "guid": str(o.get_editor_property("parent_node_guid")),
-            "new_asset": str(o.get_editor_property("new_asset")),
+    try:
+        overrides = asset.get_editor_property("parent_asset_overrides")
+        for o in overrides:
+            entry = {}
+            try:
+                entry["guid"] = str(o.get_editor_property("parent_node_guid"))
+            except Exception:
+                entry["guid"] = "unknown"
+            try:
+                entry["new_asset"] = str(o.get_editor_property("new_asset"))
+            except Exception:
+                entry["new_asset"] = "unknown"
+            override_list.append(entry)
+    except Exception as e:
+        # parent_asset_overrides crashes in UE 5.7 — return empty with warning
+        return _json_result({
+            "asset_path": asset_path,
+            "override_count": 0,
+            "overrides": [],
+            "warning": f"parent_asset_overrides not accessible in this UE version: {e}",
         })
 
     return _json_result({
@@ -520,9 +576,9 @@ def remove_notify_track(asset_path, track_name):
 def add_curve(asset_path, curve_name, curve_type):
     asset, err = _load_asset(asset_path)
     if err: return _json_error(err)
-    ct_map = {"float": unreal.RawCurveTrackTypes.RCT_FLOAT, "vector": unreal.RawCurveTrackTypes.RCT_VECTOR, "transform": unreal.RawCurveTrackTypes.RCT_TRANSFORM}
+    ct_map = _get_curve_type_map()
     ct = ct_map.get(curve_type)
-    if ct is None: return _json_error(f"Unknown curve type: {curve_type}")
+    if ct is None: return _json_error(f"Unknown or unavailable curve type: {curve_type}. Available: {list(ct_map.keys())}")
     unreal.AnimationLibrary.add_curve(asset, curve_name, ct)
     return _json_result({"asset_path": asset_path, "curve_name": curve_name, "type": curve_type})
 
@@ -596,20 +652,40 @@ def set_additive_type(asset_path, additive_type, base_pose_type=None):
 # ---------------------------------------------------------------------------
 
 def add_virtual_bone(asset_path, source_bone, target_bone):
+    # AnimationLibrary.add_virtual_bone API changed in UE 5.7 — delegate to C++ plugin
+    try:
+        result = unreal.AnimationMCPReaderLibrary.add_virtual_bone(asset_path, source_bone, target_bone)
+        return result
+    except Exception:
+        pass
+    # Fallback: try Python API directly
     asset, err = _load_asset(asset_path)
     if err: return _json_error(err)
-    name = unreal.AnimationLibrary.add_virtual_bone(asset, source_bone, target_bone)
-    return _json_result({"asset_path": asset_path, "virtual_bone": str(name), "source": source_bone, "target": target_bone})
+    try:
+        name = unreal.AnimationLibrary.add_virtual_bone(asset, source_bone, target_bone)
+        return _json_result({"asset_path": asset_path, "virtual_bone": str(name), "source": source_bone, "target": target_bone})
+    except Exception as e:
+        return _json_error(f"add_virtual_bone failed: {e}. Ensure AnimationMCPReader plugin is loaded.")
 
 def remove_virtual_bones(asset_path, bone_names=None):
+    # AnimationLibrary.remove_virtual_bones API changed in UE 5.7 — delegate to C++ plugin
+    try:
+        result = unreal.AnimationMCPReaderLibrary.remove_virtual_bones(asset_path, bone_names or [])
+        return result
+    except Exception:
+        pass
+    # Fallback: try Python API directly
     asset, err = _load_asset(asset_path)
     if err: return _json_error(err)
-    lib = unreal.AnimationLibrary
-    if bone_names:
-        lib.remove_virtual_bones(asset, bone_names)
-    else:
-        lib.remove_all_virtual_bones(asset)
-    return _json_result({"asset_path": asset_path, "removed": bone_names or "all"})
+    try:
+        lib = unreal.AnimationLibrary
+        if bone_names:
+            lib.remove_virtual_bones(asset, bone_names)
+        else:
+            lib.remove_all_virtual_bones(asset)
+        return _json_result({"asset_path": asset_path, "removed": bone_names or "all"})
+    except Exception as e:
+        return _json_error(f"remove_virtual_bones failed: {e}. Ensure AnimationMCPReader plugin is loaded.")
 
 def copy_notifies(source_path, dest_path):
     src, err = _load_asset(source_path)
@@ -769,22 +845,25 @@ def search_by_curve(curve_name, curve_type=None, folder=None):
     lib = unreal.AnimationLibrary
     matches = []
 
-    ct_list = [unreal.RawCurveTrackTypes.RCT_FLOAT]
-    if curve_type == "vector":
-        ct_list = [unreal.RawCurveTrackTypes.RCT_VECTOR]
-    elif curve_type == "transform":
-        ct_list = [unreal.RawCurveTrackTypes.RCT_TRANSFORM]
-    elif curve_type is None:
-        ct_list = [unreal.RawCurveTrackTypes.RCT_FLOAT, unreal.RawCurveTrackTypes.RCT_VECTOR, unreal.RawCurveTrackTypes.RCT_TRANSFORM]
+    all_ct = _get_curve_type_map()
+    if curve_type and curve_type in all_ct:
+        ct_list = [all_ct[curve_type]]
+    elif curve_type:
+        return _json_error(f"Unknown or unavailable curve type: {curve_type}. Available: {list(all_ct.keys())}")
+    else:
+        ct_list = list(all_ct.values())
 
     for ad in assets:
         asset = ad.get_asset()
         if asset is None:
             continue
         for ct in ct_list:
-            if lib.does_curve_exist(asset, curve_name, ct):
-                matches.append({"asset": str(ad.package_name), "curve": curve_name})
-                break
+            try:
+                if lib.does_curve_exist(asset, curve_name, ct):
+                    matches.append({"asset": str(ad.package_name), "curve": curve_name})
+                    break
+            except Exception:
+                continue
 
     return _json_result({"count": len(matches), "matches": matches})
 

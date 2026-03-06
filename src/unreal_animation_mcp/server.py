@@ -562,6 +562,21 @@ def get_skeleton_info(asset_path: str) -> str:
         return f"Error: {err}"
 
     lines = [f"Skeleton: {data.get('asset_path', asset_path)}"]
+    bone_count = data.get("bone_count", 0)
+    lines.append(f"  Bones: {bone_count}")
+    bones = data.get("bones", data.get("bone_names", []))
+    if bones:
+        # Show first 20 bone names
+        bone_names_list = [b["name"] if isinstance(b, dict) else str(b) for b in bones[:20]]
+        lines.append(f"  Bone Names: {', '.join(bone_names_list)}")
+        if len(bones) > 20:
+            lines.append(f"  ... and {len(bones) - 20} more")
+    vbones = data.get("virtual_bones", [])
+    if vbones:
+        lines.append(f"  Virtual Bones: {len(vbones)}")
+        for vb in vbones:
+            if isinstance(vb, dict):
+                lines.append(f"    {vb.get('name', '?')}: {vb.get('source', '?')} -> {vb.get('target', '?')}")
     compat = data.get("compatible_skeletons", [])
     if compat:
         lines.append(f"  Compatible Skeletons: {', '.join(compat)}")
@@ -592,10 +607,15 @@ def get_skeletal_mesh_info(asset_path: str) -> str:
     lines = [
         f"SkeletalMesh: {data.get('asset_path', asset_path)}",
         f"  Skeleton: {data.get('skeleton', 'None')}",
+        f"  LODs: {data.get('lod_count', 0)}",
         f"  Morph Targets: {data.get('morph_target_count', 0)}",
         f"  Sockets: {data.get('socket_count', 0)}",
-        f"  LODs: {data.get('lod_count', 0)}",
+        f"  Materials: {data.get('material_count', 0)}",
     ]
+    materials = data.get("materials", [])
+    for mat in materials:
+        if isinstance(mat, dict):
+            lines.append(f"    [{mat.get('index', '?')}] {mat.get('name', '?')}: {mat.get('material', 'None')}")
     return "\n".join(lines)
 
 
