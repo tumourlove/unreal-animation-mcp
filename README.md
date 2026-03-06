@@ -1,6 +1,6 @@
 # unreal-animation-mcp
 
-Animation data inspector and editor for Unreal Engine AI development via Model Context Protocol.
+Animation data inspector and editor for Unreal Engine AI development via [Model Context Protocol](https://modelcontextprotocol.io/).
 
 Inspect, search, and edit animation sequences, montages, blend spaces, animation blueprints, skeletons, and skeletal meshes — 62 tools total.
 
@@ -52,15 +52,15 @@ Add to your project's `.mcp.json`:
 }
 ```
 
-### Environment Variables
+## Environment Variables
 
-| Variable | Default | Purpose |
-|----------|---------|---------|
-| `UE_PROJECT_PATH` | *(required)* | Absolute path to your `.uproject` root |
-| `UE_EDITOR_PYTHON_PORT` | `6776` | TCP port for editor Python commands |
-| `UE_MULTICAST_GROUP` | `239.0.0.1` | Multicast group for editor discovery |
-| `UE_MULTICAST_PORT` | `6766` | Multicast port for editor discovery |
-| `UE_MULTICAST_BIND` | `127.0.0.1` | Local interface to bind multicast listener |
+| Variable | Required | Description |
+|----------|----------|-------------|
+| `UE_PROJECT_PATH` | Yes | Path to the UE project root (containing the .uproject file) |
+| `UE_EDITOR_PYTHON_PORT` | No | TCP port for editor Python commands (default: `6776`) |
+| `UE_MULTICAST_GROUP` | No | UDP multicast group for editor discovery (default: `239.0.0.1`) |
+| `UE_MULTICAST_PORT` | No | UDP multicast port for editor discovery (default: `6766`) |
+| `UE_MULTICAST_BIND` | No | Local interface to bind multicast listener (default: `127.0.0.1`) |
 
 ## How It Works
 
